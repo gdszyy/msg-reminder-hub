@@ -57,11 +57,13 @@ LARK_BASE_URL: str = (
 )
 
 # ---------------------------------------------------------------------------
-# Telegram 配置
+# Telegram 配置（User API / MTProto）
 # ---------------------------------------------------------------------------
 
-TG_BOT_TOKEN: str = os.environ.get("TG_BOT_TOKEN", "")
-TG_TARGET_USER_ID: str = os.environ.get("TG_TARGET_USER_ID", "")
+TG_API_ID: str = os.environ.get("TG_API_ID", "")
+TG_API_HASH: str = os.environ.get("TG_API_HASH", "")
+TG_PHONE: str = os.environ.get("TG_PHONE", "")
+TG_SESSION_NAME: str = os.environ.get("TG_SESSION_NAME", "tg_user_session")
 TG_MONITORED_CHATS: List[str] = _parse_list(os.environ.get("TG_MONITORED_CHATS", ""))
 
 # ---------------------------------------------------------------------------

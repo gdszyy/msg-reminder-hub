@@ -7,7 +7,7 @@
 | 能力 | 说明 | 状态 |
 |------|------|------|
 | Lark 消息拉取 | 增量拉取飞书群聊/私聊消息，支持 Webhook 实时接收 | ✅ 已实现 |
-| Telegram 消息拉取 | 通过 Bot API 拉取群组和私聊消息 | ✅ 已实现 |
+| Telegram 消息拉取 | 通过 User API (MTProto/Telethon) 扫描你账号的所有对话 | ✅ 已实现 |
 | WhatsApp 消息拉取 | 基于 WhatsApp Business API | ⏸ 暂缓 |
 | LLM 智能识别 | 自动判断消息是否需要用户回复/处理 | ✅ 已实现 |
 | 统一待办池 | 将多平台消息整合为统一的待回复记录 | ✅ 已实现 |
@@ -106,8 +106,9 @@ python scripts/run_fetch.py --platform lark --dry-run
 | `LARK_APP_ID` | ✅ | 飞书应用 App ID |
 | `LARK_APP_SECRET` | ✅ | 飞书应用 App Secret |
 | `LARK_TARGET_USER_ID` | ✅ | 被监控用户的 open_id（识别与谁相关的消息） |
-| `TG_BOT_TOKEN` | ❌ | Telegram Bot Token（启用 TG 时必填） |
-| `TG_TARGET_USER_ID` | ❌ | Telegram 目标用户 ID |
+| `TG_API_ID` | ❤️ | Telegram API ID（从 my.telegram.org 获取） |
+| `TG_API_HASH` | ❤️ | Telegram API Hash |
+| `TG_PHONE` | ❤️ | 你的手机号（如 +8613800138000） |
 | `DATABASE_URL` | ❌ | 数据库连接串，默认 SQLite |
 | `REMINDER_INTERVAL_MINUTES` | ❌ | 提醒间隔（分钟），默认 30 |
 | `FETCH_INTERVAL_MINUTES` | ❌ | 消息拉取间隔（分钟），默认 15 |

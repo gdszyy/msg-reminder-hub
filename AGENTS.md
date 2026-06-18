@@ -21,7 +21,7 @@
 | 平台 | 文件 | 状态 | 说明 |
 |------|------|------|------|
 | Lark (飞书) | `src/ingestion/lark_fetcher.py` | ✅ 已实现 | 增量拉取 + Webhook 实时 |
-| Telegram | `src/ingestion/tg_fetcher.py` | ✅ 已实现 | Bot API getUpdates |
+| Telegram | `src/ingestion/tg_fetcher.py` | ✅ 已实现 | User API (MTProto/Telethon)，手机号登录，扫描所有对话 |
 | WhatsApp | — | ⏸ 暂缓 | 待接入 Business API |
 
 ## 关键文件索引
