@@ -28,11 +28,25 @@ logger = logging.getLogger("msg_reminder.storage")
 # 数据库引擎
 # ---------------------------------------------------------------------------
 
-engine = create_engine(
-    settings.DATABASE_URL,
-    echo=False,
-    pool_pre_ping=True,
-)
+# 根据数据库类型调整 engine 参数
+_engine_kwargs = {
+    "echo": False,
+    "pool_pre_ping": True,
+}
+# MySQL 需要指定字符集和连接池大小
+if "mysql" in settings.DATABASE_URL:
+    _engine_kwargs["pool_size"] = 5
+    _engine_kwargs["max_overflow"] = 10
+    _engine_kwargs["pool_recycle"] = 3600  # 1小时回收连接，避免 MySQL gone away
+    # 确保 URL 带上 charset
+    _db_url = settings.DATABASE_URL
+    if "charset" not in _db_url:
+        sep = "&" if "?" in _db_url else "?"
+        _db_url = f"{_db_url}{sep}charset=utf8mb4"
+else:
+    _db_url = settings.DATABASE_URL
+
+engine = create_engine(_db_url, **_engine_kwargs)
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 
@@ -71,14 +85,14 @@ class Message(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     platform = Column(String(20), nullable=False, index=True)       # lark / telegram / whatsapp
-    platform_msg_id = Column(String(100), nullable=False)           # 平台原始消息ID
-    chat_id = Column(String(100), nullable=False, index=True)       # 群组/对话ID
-    chat_name = Column(String(200), default="")                     # 群组名称
-    sender_id = Column(String(100), nullable=False)                 # 发送者ID
-    sender_name = Column(String(100), default="")                   # 发送者名称
+    platform_msg_id = Column(String(128), nullable=False)           # 平台原始消息ID
+    chat_id = Column(String(128), nullable=False, index=True)       # 群组/对话ID
+    chat_name = Column(String(255), default="")                     # 群组名称
+    sender_id = Column(String(128), nullable=False)                 # 发送者ID
+    sender_name = Column(String(128), default="")                   # 发送者名称
     content = Column(Text, nullable=False)                          # 消息文本内容
-    msg_type = Column(String(20), default="text")                   # 消息类型
-    reply_to_id = Column(String(100), default="")                   # 回复的消息ID
+    msg_type = Column(String(32), default="text")                   # 消息类型
+    reply_to_id = Column(String(128), default="")                   # 回复的消息ID
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))  # 消息原始时间
     fetched_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))  # 拉取时间
     raw_data = Column(Text, default="")                             # 原始JSON（调试用）
@@ -96,15 +110,15 @@ class Reminder(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     message_id = Column(Integer, nullable=False, index=True)        # 关联的消息ID
     platform = Column(String(20), nullable=False)                   # 来源平台
-    chat_id = Column(String(100), nullable=False)                   # 来源群组
-    chat_name = Column(String(200), default="")                     # 群组名称
-    sender_name = Column(String(100), default="")                   # 提问者名称
+    chat_id = Column(String(128), nullable=False)                   # 来源群组
+    chat_name = Column(String(255), default="")                     # 群组名称
+    sender_name = Column(String(128), default="")                   # 提问者名称
     summary = Column(Text, nullable=False)                          # AI 生成的摘要
-    urgency = Column(String(10), default=Urgency.MEDIUM)            # 紧急程度
+    urgency = Column(String(16), default=Urgency.MEDIUM)            # 紧急程度
     status = Column(String(20), default=ReminderStatus.PENDING, index=True)
     confidence = Column(Float, default=0.0)                         # AI 置信度
     context_messages = Column(Text, default="[]")                   # 上下文消息ID列表(JSON)
-    deep_link = Column(String(500), default="")                     # 跳转到原消息的链接
+    deep_link = Column(String(512), default="")                     # 跳转到原消息的链接
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     reminded_at = Column(DateTime, nullable=True)                   # 最后提醒时间
     replied_at = Column(DateTime, nullable=True)                    # 回复时间
@@ -121,8 +135,8 @@ class Cursor(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     platform = Column(String(20), nullable=False)
-    chat_id = Column(String(100), nullable=False)
-    last_message_id = Column(String(100), default="")               # 最后拉取的消息ID
+    chat_id = Column(String(128), nullable=False)
+    last_message_id = Column(String(128), default="")               # 最后拉取的消息ID
     last_timestamp = Column(Integer, default=0)                     # 最后拉取的时间戳(秒)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 

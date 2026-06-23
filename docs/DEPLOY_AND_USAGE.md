@@ -113,14 +113,16 @@ LARK_TARGET_USER_ID=ou_你的open_id
 # ===== 监控范围（留空=监控所有已加入的群） =====
 LARK_MONITORED_CHATS=
 
+# ===== 数据库（必须用 MySQL，容器重启后 SQLite 会丢失） =====
+# 在 Railway Dashboard 新建一个 MySQL 服务，然后把连接串填这里
+# 格式: mysql+pymysql://用户名:密码@主机:3306/数据库名
+DATABASE_URL=${{MySQL.DATABASE_URL}}
+
 # ===== 调度配置 =====
 FETCH_INTERVAL_MINUTES=15
 REMINDER_INTERVAL_MINUTES=30
 REMINDER_MAX_PER_BATCH=10
 REMINDER_COOLDOWN_HOURS=4
-
-# ===== 数据库（Railway 默认用 SQLite，文件存在容器内） =====
-DATABASE_URL=sqlite:///data/msg_reminder.db
 
 # ===== Web 服务 =====
 WEB_HOST=0.0.0.0
@@ -129,6 +131,11 @@ WEB_PORT=8000
 # ===== 日志 =====
 LOG_LEVEL=INFO
 ```
+
+> **重要**：`DATABASE_URL` 用的是 Railway 的变量引用语法 `${{MySQL.DATABASE_URL}}`。
+> 如果你的 MySQL 服务名称不叫 "MySQL"，换成你实际的服务名。
+> 或者直接填写完整连接串：
+> `DATABASE_URL=mysql+pymysql://root:xxx@mysql.railway.internal:3306/railway`
 
 ### 2.4 各 LLM 服务的 Base URL 参考
 
@@ -160,21 +167,26 @@ LOG_LEVEL=INFO
 4. 添加事件：`im.message.receive_v1`（接收消息）
 5. 保存并验证
 
-### 2.7 Railway 持久化注意事项
+### 2.7 Railway MySQL 配置步骤
 
-Railway 默认使用临时文件系统（重启后数据丢失）。如果需要持久化：
+Railway 容器是无状态的，重启/重新部署后文件系统会重置。所以**必须用 MySQL**：
 
-**方案 A：使用 Railway Volume（推荐）**
-```
-# 在 Railway Dashboard → Service → Settings → Volumes
-# 挂载路径: /app/data
-# 然后 DATABASE_URL 设为: sqlite:////app/data/msg_reminder.db
-```
+1. Railway Dashboard → 你的 Project → 点击 **+ New** → **Database** → **MySQL**
+2. 等待 MySQL 服务启动完成
+3. 在你的应用服务的 Variables 中，配置：
 
-**方案 B：使用外部 MySQL**
 ```env
-DATABASE_URL=mysql+pymysql://user:pass@host:3306/msg_reminder
+# 方式一：使用 Railway 变量引用（推荐，自动同步）
+DATABASE_URL=mysql+pymysql://${{MySQL.MYSQLUSER}}:${{MySQL.MYSQLPASSWORD}}@${{MySQL.MYSQLHOST}}:${{MySQL.MYSQLPORT}}/${{MySQL.MYSQLDATABASE}}
+
+# 方式二：直接填写完整连接串
+# 在 MySQL 服务的 Variables 页找到连接信息，拼接如下：
+DATABASE_URL=mysql+pymysql://root:your_password@mysql.railway.internal:3306/railway
 ```
+
+4. 应用启动时会自动创建表结构（`init_db()`），无需手动建表
+
+> 本地开发时不配置 `DATABASE_URL` 环境变量即可自动回退到 SQLite。
 
 ---
 
