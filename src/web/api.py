@@ -188,50 +188,60 @@ def get_feed(
     hours: int = Query(24, ge=1, le=168),
 ):
     """
-    获取近期动态/待关注资讯。
-    按群组分组返回最近 N 小时内的消息摘要。
+    获取近期资讯（按主题汇总）。
+    每个话题包含：发生了什么、是否需要决策、关键须知信息。
     """
     from datetime import timedelta
+    from src.storage.db import TopicDigest
     session = get_session()
     try:
         since = datetime.now(timezone.utc) - timedelta(hours=hours)
-        messages = (
-            session.query(Message)
-            .filter(Message.created_at >= since)
-            .order_by(Message.created_at.desc())
+        digests = (
+            session.query(TopicDigest)
+            .filter(TopicDigest.created_at >= since)
+            .order_by(TopicDigest.created_at.desc())
             .limit(limit)
             .all()
         )
 
-        # 按群组分组
-        groups = {}
-        for m in messages:
-            key = m.chat_name or m.chat_id
-            if key not in groups:
-                groups[key] = {
-                    "chat_name": m.chat_name or m.chat_id,
-                    "chat_id": m.chat_id,
-                    "platform": m.platform,
-                    "messages": [],
-                    "count": 0,
-                }
-            groups[key]["messages"].append({
-                "id": m.id,
-                "sender_name": m.sender_name,
-                "content": m.content[:200],
-                "created_at": m.created_at.isoformat() if m.created_at else "",
+        items = []
+        for d in digests:
+            items.append({
+                "id": d.id,
+                "platform": d.platform,
+                "chat_name": d.chat_name,
+                "topic": d.topic,
+                "summary": d.summary,
+                "needs_decision": d.needs_decision,
+                "key_info": _safe_json_loads(d.key_info),
+                "participants": _safe_json_loads(d.participants),
+                "message_count": d.message_count,
+                "first_message_id": d.first_message_id,
+                "created_at": d.created_at.isoformat() if d.created_at else "",
             })
-            groups[key]["count"] += 1
 
-        # 按消息数量排序
-        feed = sorted(groups.values(), key=lambda g: g["count"], reverse=True)
+        # 统计
+        decision_count = sum(1 for i in items if i["needs_decision"])
+
         return {
-            "total_messages": len(messages),
-            "groups": feed,
+            "total": len(items),
+            "needs_decision_count": decision_count,
+            "items": items,
             "since": since.isoformat(),
         }
     finally:
         session.close()
+
+
+def _safe_json_loads(s):
+    """安全解析 JSON 字符串，失败返回空列表"""
+    if not s:
+        return []
+    try:
+        import json
+        return json.loads(s)
+    except (json.JSONDecodeError, TypeError):
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -457,23 +467,30 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             const resp = await fetch('/api/feed?hours=24&limit=100');
             const data = await resp.json();
             const list = document.getElementById('feedList');
-            if (!data.groups.length) {
-                list.innerHTML = '<div class="empty">最近 24 小时无新消息</div>';
+            if (!data.items || !data.items.length) {
+                list.innerHTML = '<div class="empty">最近 24 小时无话题摘要（请先点击「⚡ 立即拉取」）</div>';
                 return;
             }
-            list.innerHTML = data.groups.map(g => `
-                <div class="feed-group">
+            list.innerHTML = `<div style="margin-bottom:12px;font-size:13px;color:#666;">共 ${data.total} 个话题，其中 ${data.needs_decision_count} 个待决策</div>` +
+                data.items.map(item => `
+                <div class="feed-group" ${item.first_message_id ? `onclick="showContext(${item.first_message_id})" style="cursor:pointer"` : ''}>
                     <div class="feed-group-header">
-                        <span>${g.chat_name}</span>
-                        <span class="badge">${g.count} 条消息</span>
+                        <span>${item.needs_decision ? '🟠' : '🟢'} ${item.topic}</span>
+                        <span class="badge">${item.chat_name} · ${item.message_count}条</span>
                     </div>
-                    ${g.messages.slice(0, 5).map(m => `
-                        <div class="feed-msg">
-                            <span class="sender">${m.sender_name || '未知'}:</span>
-                            ${m.content}
+                    <div class="feed-msg" style="font-size:14px;color:#333;margin:6px 0;">
+                        <strong>发生了什么：</strong>${item.summary}
+                    </div>
+                    ${item.needs_decision ? '<div style="font-size:13px;color:#e65100;margin:4px 0;"><strong>⚠️ 需要决策</strong></div>' : ''}
+                    ${item.key_info && item.key_info.length ? `
+                        <div style="font-size:13px;color:#555;margin-top:4px;">
+                            <strong>关键须知：</strong>
+                            <ul style="margin:4px 0 0 16px;padding:0;">
+                                ${item.key_info.map(k => `<li>${k}</li>`).join('')}
+                            </ul>
                         </div>
-                    `).join('')}
-                    ${g.count > 5 ? `<div style="font-size:12px;color:#999;margin-top:4px;">...还有 ${g.count - 5} 条</div>` : ''}
+                    ` : ''}
+                    <div style="font-size:12px;color:#999;margin-top:6px;">参与者: ${item.participants.join(', ') || '未知'} · ${item.created_at ? new Date(item.created_at).toLocaleString('zh-CN') : ''}</div>
                 </div>
             `).join('');
         }

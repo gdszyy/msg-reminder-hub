@@ -39,12 +39,12 @@ except ImportError:
     pass
 
 from config import settings
-from src.storage.db import init_db, get_session, save_message, create_reminder, Message
+from src.storage.db import init_db, get_session, save_message, create_reminder, Message, TopicDigest
 from src.storage.cursor import CursorManager
 from src.ingestion.lark_fetcher import LarkFetcher
 from src.ingestion.tg_fetcher import TelegramFetcher
 from src.processing.normalizer import normalize_messages
-from src.processing.llm_analyzer import analyze_messages
+from src.processing.llm_analyzer import analyze_messages, generate_topic_digest
 from src.delivery.scheduler import run_reminder_cycle
 from src.delivery.notifier import send_lark_text
 from src.web.api import router as web_router
@@ -200,25 +200,50 @@ def _process_platform(fetcher, cursor_mgr) -> tuple:
         # 对话分离：500 条消息 → N 个独立线程
         threads = split_messages_into_threads(msgs_for_split)
 
-        # 逐线程发给 LLM 分析
+        # 逐线程发给 LLM 分析（同时生成话题摘要）
         all_needs_reply = []
+        topic_digests = []
+
         for thread_msgs in threads:
             # 构建 LLM 输入（保留全局索引）
             analysis_input = []
             for msg in thread_msgs:
                 analysis_input.append({
-                    "index": msg["_global_index"] + 1,  # LLM 输出的 message_index 对应全局位置
+                    "index": msg["_global_index"] + 1,
                     "sender_name": msg.get("sender_name", ""),
                     "content": msg.get("content", ""),
                     "created_at": msg["created_at"].strftime("%H:%M") if isinstance(msg.get("created_at"), datetime) else "",
                 })
 
+            # 1) 判断是否需要回复
             thread_results = analyze_messages(
                 messages=analysis_input,
                 chat_name=chat_name,
                 target_user_id=settings.LARK_TARGET_USER_ID,
             )
             all_needs_reply.extend(thread_results)
+
+            # 2) 生成话题摘要（用于“近期资讯”视图）
+            digest = generate_topic_digest(
+                messages=analysis_input,
+                chat_name=chat_name,
+            )
+            if digest and digest.get("topic") != "闲聊":
+                # 找到线程第一条消息的 DB id
+                first_global_idx = thread_msgs[0]["_global_index"]
+                first_db_id = saved_msg_ids[first_global_idx] if first_global_idx < len(saved_msg_ids) else None
+                topic_digests.append({
+                    "platform": platform,
+                    "chat_id": chat_id,
+                    "chat_name": chat_name,
+                    "topic": digest.get("topic", ""),
+                    "summary": digest.get("summary", ""),
+                    "needs_decision": digest.get("needs_decision", False),
+                    "key_info": json.dumps(digest.get("key_info", []), ensure_ascii=False),
+                    "participants": json.dumps(digest.get("participants", []), ensure_ascii=False),
+                    "message_count": len(thread_msgs),
+                    "first_message_id": first_db_id,
+                })
 
         # 创建提醒
         if all_needs_reply:
@@ -240,6 +265,31 @@ def _process_platform(fetcher, cursor_mgr) -> tuple:
                         }
                         create_reminder(session, reminder_data)
                         total_rems += 1
+            finally:
+                session.close()
+
+        # 写入话题摘要
+        if topic_digests:
+            session = get_session()
+            try:
+                for td in topic_digests:
+                    record = TopicDigest(
+                        platform=td["platform"],
+                        chat_id=td["chat_id"],
+                        chat_name=td["chat_name"],
+                        topic=td["topic"],
+                        summary=td["summary"],
+                        needs_decision=td["needs_decision"],
+                        key_info=td["key_info"],
+                        participants=td["participants"],
+                        message_count=td["message_count"],
+                        first_message_id=td["first_message_id"],
+                    )
+                    session.add(record)
+                session.commit()
+                logger.info("写入 %d 条话题摘要: chat=%s", len(topic_digests), chat_name)
+            except Exception as e:
+                logger.error("写入话题摘要失败: %s", e)
             finally:
                 session.close()
 

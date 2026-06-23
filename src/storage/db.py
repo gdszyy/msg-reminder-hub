@@ -184,6 +184,32 @@ class Cursor(Base):
     )
 
 
+class TopicDigest(Base):
+    """
+    话题摘要表。
+    每个对话线程经 LLM 分析后生成一条摘要记录，
+    用于“近期资讯”视图展示。
+    """
+    __tablename__ = "topic_digests"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    platform = Column(String(20), nullable=False, index=True)
+    chat_id = Column(String(128), nullable=False)
+    chat_name = Column(String(255), default="")
+    topic = Column(String(255), nullable=False)                     # 话题标题
+    summary = Column(Text, nullable=False)                          # 发生了什么
+    needs_decision = Column(Boolean, default=False)                 # 是否需要决策
+    key_info = Column(Text, default="")                             # 关键须知信息（JSON 数组）
+    participants = Column(Text, default="[]")                       # 参与者列表（JSON）
+    message_count = Column(Integer, default=0)                      # 该线程的消息数
+    first_message_id = Column(Integer, nullable=True)               # 线程第一条消息的 DB id
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        Index("ix_digest_platform_time", "platform", "created_at"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # 数据库操作
 # ---------------------------------------------------------------------------

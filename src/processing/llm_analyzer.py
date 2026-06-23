@@ -354,3 +354,93 @@ def analyze_with_context(
     except Exception as e:
         logger.error("上下文分析失败: %s", str(e))
         return None
+
+
+# ---------------------------------------------------------------------------
+# 话题摘要生成（用于"近期资讯"视图）
+# ---------------------------------------------------------------------------
+
+TOPIC_DIGEST_PROMPT = """你是一个信息整理助手。请阅读以下对话线程，生成结构化摘要。
+
+对话来自群「{chat_name}」，共 {msg_count} 条消息。
+
+{messages_text}
+
+请输出以下 JSON（严格格式，不要其他内容）：
+{{
+  "topic": "话题标题（10字以内，概括这个对话在讨论什么）",
+  "summary": "发生了什么（2-3句话，客观描述对话的核心内容和结论）",
+  "needs_decision": true或false（是否有待决策的事项悬而未决）,
+  "key_info": ["关键须知1", "关键须知2"]（提炼出的关键信息点，最多5条，每条一句话）,
+  "participants": ["参与者1", "参与者2"]（主要参与讨论的人）
+}}
+
+判定 needs_decision=true 的条件：
+- 讨论中提出了方案但未拍板
+- 有人在等某个决策才能继续
+- 涉及选型、排期、优先级等需要拍板的事项
+
+如果对话是纯闲聊或无实质内容，topic 填"闲聊"，summary 填"无实质内容"，key_info 为空数组。"""
+
+
+def generate_topic_digest(
+    messages: List[Dict],
+    chat_name: str = "",
+) -> Optional[Dict]:
+    """
+    为一个对话线程生成话题摘要。
+
+    参数:
+      messages: 线程内的消息列表 [{sender_name, content, created_at}, ...]
+      chat_name: 群组名称
+
+    返回:
+      {topic, summary, needs_decision, key_info, participants} 或 None（失败时）
+    """
+    if not messages or not settings.LLM_API_KEY:
+        return None
+
+    # 过滤掉太短的线程（≤2条消息且总字数<20，大概率是无意义的）
+    total_chars = sum(len(m.get("content", "")) for m in messages)
+    if len(messages) <= 2 and total_chars < 20:
+        return None
+
+    # 构建消息文本
+    lines = []
+    for msg in messages:
+        sender = msg.get("sender_name", "?")
+        content = msg.get("content", "")
+        time_str = msg.get("created_at", "")
+        if isinstance(time_str, str) and len(time_str) > 5:
+            time_str = time_str[-5:]  # 只取 HH:MM
+        lines.append(f"[{time_str}] {sender}: {content}")
+
+    messages_text = "\n".join(lines)
+    if len(messages_text) > 4000:
+        messages_text = messages_text[:4000] + "\n...(已截断)"
+
+    prompt = TOPIC_DIGEST_PROMPT.format(
+        chat_name=chat_name or "未知群组",
+        msg_count=len(messages),
+        messages_text=messages_text,
+    )
+
+    try:
+        client = _get_client()
+        response = client.chat.completions.create(
+            model=settings.LLM_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=500,
+        )
+        raw = response.choices[0].message.content.strip()
+        result = _parse_llm_json(raw)
+
+        # 验证必要字段
+        if "topic" in result and "summary" in result:
+            return result
+        return None
+
+    except Exception as e:
+        logger.error("生成话题摘要失败: %s", str(e))
+        return None
