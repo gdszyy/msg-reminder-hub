@@ -274,35 +274,42 @@ class LarkFetcher(BaseFetcher):
         chat_id: str,
         since_timestamp: int = 0,
         since_message_id: str = "",
-        limit: int = 100,
+        limit: int = 500,
     ) -> List[RawMessage]:
         """
-        增量拉取指定群组的消息。
+        基于游标增量拉取指定群组的消息。
 
-        使用时间戳范围查询，从 since_timestamp 到当前时间。
+        核心逻辑：
+          - since_timestamp 是上次拉取的截止时间戳（游标）
+          - 每次从游标开始，拉到当前时间为止，不管中间隔了多久
+          - 首次运行（游标为空）时，从 FETCH_COLD_START_HOURS 小时前开始（冷启动）
+          - limit 只是安全上限，正常情况下会拉完所有新消息
+
         返回标准化的 RawMessage 列表（按时间正序）。
         """
         url = f"{settings.LARK_BASE_URL}/open-apis/im/v1/messages"
         messages = []
         page_token = None
 
-        # 如果没有起始时间戳（首次拉取），默认拉取最近 24 小时
+        # 游标为空 = 首次运行（冷启动），从 N 小时前开始
         if not since_timestamp:
-            default_hours = int(os.environ.get("FETCH_INITIAL_HOURS", "24"))
-            since_timestamp = int(time.time()) - (default_hours * 3600)
+            cold_start_hours = int(os.environ.get("FETCH_COLD_START_HOURS", "24"))
+            since_timestamp = int(time.time()) - (cold_start_hours * 3600)
+            logger.info("冷启动: chat=%s, 从 %d 小时前开始拉取", chat_id, cold_start_hours)
 
         end_timestamp = int(time.time())
 
         # 获取群名
         chat_name = self.get_chat_name(chat_id)
 
+        # 循环分页拉取，直到没有更多数据或达到安全上限
         while len(messages) < limit:
             params = {
                 "container_id_type": "chat",
                 "container_id": chat_id,
                 "start_time": str(since_timestamp),
                 "end_time": str(end_timestamp),
-                "page_size": min(50, limit - len(messages)),
+                "page_size": 50,
                 "sort_type": "ByCreateTimeAsc",
             }
             if page_token:

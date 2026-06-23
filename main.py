@@ -141,12 +141,11 @@ def _process_platform(fetcher, cursor_mgr) -> tuple:
         # 获取游标
         last_msg_id, last_ts = cursor_mgr.get_last_position(chat_id)
 
-        # 增量拉取
+        # 基于游标增量拉取（从上次截止时间到现在，拉完所有新消息）
         raw_messages = fetcher.fetch_messages(
             chat_id=chat_id,
             since_timestamp=last_ts,
             since_message_id=last_msg_id,
-            limit=100,
         )
 
         if not raw_messages:
