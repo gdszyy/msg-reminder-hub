@@ -94,15 +94,37 @@
 #    https://你的railway域名/lark/webhook
 ```
 
-### 2.3 Railway Variables 配置（Raw 格式）
+### 2.3 Railway 新建 MySQL 数据库（必做）
+
+Railway 容器是无状态的，重启/重新部署后本地文件会丢失。所以必须新建一个 MySQL 服务作为持久化存储。
+
+**操作步骤：**
+
+1. 打开你的 Railway Project Dashboard
+2. 点击右上角 **+ New** 按钮
+3. 选择 **Database** → **MySQL**
+4. 等待 10~20 秒，MySQL 服务自动创建完成
+5. 点击新建的 MySQL 服务 → **Variables** 页签
+6. 你会看到这些自动生成的变量：
+   - `MYSQLUSER` = root
+   - `MYSQLPASSWORD` = xxxxxx
+   - `MYSQLHOST` = mysql.railway.internal
+   - `MYSQLPORT` = 3306
+   - `MYSQLDATABASE` = railway
+   - `MYSQL_URL` = mysql://root:xxxxxx@mysql.railway.internal:3306/railway
+7. 回到你的应用服务，在 Variables 中配置 `DATABASE_URL`（见下方 Raw 格式）
+
+> 应用启动时会自动创建表结构（`messages` / `reminders` / `cursors`），无需手动建表。
+
+### 2.4 Railway Variables 配置（Raw 格式）
 
 直接复制以下内容到 Railway 的 Variables → Raw Editor：
 
 ```env
-# ===== LLM 配置 =====
-LLM_API_KEY=sk-你的API密钥
-LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-LLM_MODEL=qwen-plus
+# ===== LLM 配置 (DeepSeek) =====
+LLM_API_KEY=sk-你的deepseek密钥
+LLM_BASE_URL=https://api.deepseek.com/v1
+LLM_MODEL=deepseek-chat
 
 # ===== Lark 应用凭证 =====
 LARK_APP_ID=cli_你的app_id
@@ -113,10 +135,11 @@ LARK_TARGET_USER_ID=ou_你的open_id
 # ===== 监控范围（留空=监控所有已加入的群） =====
 LARK_MONITORED_CHATS=
 
-# ===== 数据库（必须用 MySQL，容器重启后 SQLite 会丢失） =====
-# 在 Railway Dashboard 新建一个 MySQL 服务，然后把连接串填这里
-# 格式: mysql+pymysql://用户名:密码@主机:3306/数据库名
-DATABASE_URL=${{MySQL.DATABASE_URL}}
+# ===== 数据库（必须用 MySQL） =====
+# 方式一：Railway 变量引用（推荐，自动同步密码变更）
+DATABASE_URL=mysql+pymysql://${{MySQL.MYSQLUSER}}:${{MySQL.MYSQLPASSWORD}}@${{MySQL.MYSQLHOST}}:${{MySQL.MYSQLPORT}}/${{MySQL.MYSQLDATABASE}}
+# 方式二：直接填写连接串（从 MySQL 服务的 Variables 页复制）
+# DATABASE_URL=mysql+pymysql://root:你的密码@mysql.railway.internal:3306/railway
 
 # ===== 调度配置 =====
 FETCH_INTERVAL_MINUTES=15
@@ -132,12 +155,12 @@ WEB_PORT=8000
 LOG_LEVEL=INFO
 ```
 
-> **重要**：`DATABASE_URL` 用的是 Railway 的变量引用语法 `${{MySQL.DATABASE_URL}}`。
-> 如果你的 MySQL 服务名称不叫 "MySQL"，换成你实际的服务名。
-> 或者直接填写完整连接串：
-> `DATABASE_URL=mysql+pymysql://root:xxx@mysql.railway.internal:3306/railway`
+> **注意事项：**
+> - `${{MySQL.MYSQLUSER}}` 是 Railway 的变量引用语法，会自动替换为 MySQL 服务的实际值
+> - 如果你的 MySQL 服务改了名（比如叫 "msg-db"），就把 `MySQL` 换成 `msg-db`
+> - 本地开发时不配置 `DATABASE_URL` 就会自动回退到 SQLite
 
-### 2.4 各 LLM 服务的 Base URL 参考
+### 2.5 各 LLM 服务的 Base URL 参考
 
 | 服务商 | LLM_BASE_URL | 推荐模型 |
 |--------|--------------|----------|
@@ -147,7 +170,7 @@ LOG_LEVEL=INFO
 | 智谱 AI | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-flash` |
 | Moonshot | `https://api.moonshot.cn/v1` | `moonshot-v1-8k` |
 
-### 2.5 获取 LARK_TARGET_USER_ID
+### 2.6 获取 LARK_TARGET_USER_ID
 
 这是你自己的飞书 open_id，用于判断"哪些消息是跟你相关的"。获取方式：
 
@@ -157,7 +180,7 @@ LOG_LEVEL=INFO
 
 或者直接在飞书管理后台 → 组织架构 → 找到你自己 → 查看 open_id。
 
-### 2.6 配置飞书 Webhook（可选，启用实时模式）
+### 2.7 配置飞书 Webhook（可选，启用实时模式）
 
 定时拉取已经能覆盖所有消息。如果你还想要"实时提醒"（消息到达秒级响应），需要配置 Webhook：
 
@@ -166,27 +189,6 @@ LOG_LEVEL=INFO
 3. 请求地址填入：`https://你的域名/lark/webhook`
 4. 添加事件：`im.message.receive_v1`（接收消息）
 5. 保存并验证
-
-### 2.7 Railway MySQL 配置步骤
-
-Railway 容器是无状态的，重启/重新部署后文件系统会重置。所以**必须用 MySQL**：
-
-1. Railway Dashboard → 你的 Project → 点击 **+ New** → **Database** → **MySQL**
-2. 等待 MySQL 服务启动完成
-3. 在你的应用服务的 Variables 中，配置：
-
-```env
-# 方式一：使用 Railway 变量引用（推荐，自动同步）
-DATABASE_URL=mysql+pymysql://${{MySQL.MYSQLUSER}}:${{MySQL.MYSQLPASSWORD}}@${{MySQL.MYSQLHOST}}:${{MySQL.MYSQLPORT}}/${{MySQL.MYSQLDATABASE}}
-
-# 方式二：直接填写完整连接串
-# 在 MySQL 服务的 Variables 页找到连接信息，拼接如下：
-DATABASE_URL=mysql+pymysql://root:your_password@mysql.railway.internal:3306/railway
-```
-
-4. 应用启动时会自动创建表结构（`init_db()`），无需手动建表
-
-> 本地开发时不配置 `DATABASE_URL` 环境变量即可自动回退到 SQLite。
 
 ---
 
