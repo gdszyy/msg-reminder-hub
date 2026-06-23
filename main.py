@@ -138,10 +138,14 @@ def _process_platform(fetcher, cursor_mgr) -> tuple:
         chat_id = chat_info["chat_id"]
         chat_name = chat_info.get("name", "")
 
-        # 获取游标
-        last_msg_id, last_ts = cursor_mgr.get_last_position(chat_id)
+        # 获取游标（FETCH_IGNORE_CURSOR=true 时忽略游标，强制冷启动，方便测试）
+        ignore_cursor = os.environ.get("FETCH_IGNORE_CURSOR", "false").lower() == "true"
+        if ignore_cursor:
+            last_msg_id, last_ts = "", 0
+        else:
+            last_msg_id, last_ts = cursor_mgr.get_last_position(chat_id)
 
-        # 基于游标增量拉取（从上次截止时间到现在，拉完所有新消息）
+        # 拉取消息（游标为空时触发冷启动，从 FETCH_COLD_START_HOURS 小时前开始）
         raw_messages = fetcher.fetch_messages(
             chat_id=chat_id,
             since_timestamp=last_ts,
