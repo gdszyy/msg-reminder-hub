@@ -156,51 +156,60 @@ def _process_platform(fetcher, cursor_mgr) -> tuple:
         if not valid_messages:
             continue
 
-        # 入库
+        # 入库（入库后提取 id，避免 session 关闭后无法访问 ORM 对象）
         session = get_session()
-        saved_msgs = []
+        saved_msg_ids = []  # 保存每条消息的 DB id，与 valid_messages 一一对应
         try:
             for msg in valid_messages:
                 msg_dict = msg.to_dict()
                 msg_dict["chat_name"] = chat_name
                 record = save_message(session, msg_dict)
-                if record:
-                    saved_msgs.append(record)
+                # record=None 表示已存在（去重），但仍然记录位置以保持索引对齐
+                saved_msg_ids.append(record.id if record else None)
         finally:
             session.close()
 
-        total_msgs += len(saved_msgs)
+        new_count = sum(1 for mid in saved_msg_ids if mid is not None)
+        total_msgs += new_count
 
-        if not saved_msgs:
-            # 所有消息都是重复的
+        if new_count == 0:
+            # 所有消息都是重复的，但仍然更新游标
+            last_valid = valid_messages[-1]
+            new_ts = int(last_valid.created_at.timestamp()) if last_valid.created_at else int(time.time())
+            cursor_mgr.update_position(chat_id, last_valid.platform_msg_id, new_ts)
             continue
 
-        # LLM 分析
-        analysis_input = []
-        for i, msg in enumerate(valid_messages):
-            analysis_input.append({
-                "index": i + 1,
-                "sender_name": msg.sender_name,
-                "content": msg.content,
-                "created_at": msg.created_at.strftime("%H:%M") if msg.created_at else "",
-            })
+        # LLM 分析（消息过多时分批，每批最多 50 条）
+        BATCH_SIZE = 50
+        all_needs_reply = []
 
-        needs_reply = analyze_messages(
-            messages=analysis_input,
-            chat_name=chat_name,
-            target_user_id=settings.LARK_TARGET_USER_ID,
-        )
+        for batch_start in range(0, len(valid_messages), BATCH_SIZE):
+            batch = valid_messages[batch_start:batch_start + BATCH_SIZE]
+            analysis_input = []
+            for i, msg in enumerate(batch):
+                analysis_input.append({
+                    "index": batch_start + i + 1,  # 全局索引
+                    "sender_name": msg.sender_name,
+                    "content": msg.content,
+                    "created_at": msg.created_at.strftime("%H:%M") if msg.created_at else "",
+                })
+
+            batch_results = analyze_messages(
+                messages=analysis_input,
+                chat_name=chat_name,
+                target_user_id=settings.LARK_TARGET_USER_ID,
+            )
+            all_needs_reply.extend(batch_results)
 
         # 创建提醒
-        if needs_reply:
+        if all_needs_reply:
             session = get_session()
             try:
-                for item in needs_reply:
+                for item in all_needs_reply:
                     msg_idx = item.get("message_index", 1) - 1
-                    if 0 <= msg_idx < len(saved_msgs):
-                        target_record = saved_msgs[msg_idx]
+                    if 0 <= msg_idx < len(saved_msg_ids) and saved_msg_ids[msg_idx] is not None:
                         reminder_data = {
-                            "message_id": target_record.id,
+                            "message_id": saved_msg_ids[msg_idx],
                             "platform": platform,
                             "chat_id": chat_id,
                             "chat_name": chat_name,
