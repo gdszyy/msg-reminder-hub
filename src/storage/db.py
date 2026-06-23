@@ -33,19 +33,58 @@ _engine_kwargs = {
     "echo": False,
     "pool_pre_ping": True,
 }
-# MySQL 需要指定字符集和连接池大小
-if "mysql" in settings.DATABASE_URL:
+
+
+def _normalize_database_url(raw_url: str) -> str:
+    """
+    将 Railway 提供的各种格式统一转为 SQLAlchemy 可识别的 URL。
+
+    Railway MySQL 服务提供的变量：
+      - MYSQL_URL: mysql://root:xxx@host:port/dbname  (需要换前缀)
+      - MYSQL_DATABASE: railway  (纯数据库名，不是 URL)
+      - MYSQLDATABASE: railway
+
+    处理逻辑：
+      1. 如果是 mysql:// 开头 → 换成 mysql+pymysql://
+      2. 如果不包含 :// → 不是合法 URL，回退到 SQLite
+      3. 如果是 sqlite:// 开头 → 直接使用
+    """
+    if not raw_url or not raw_url.strip():
+        # 未配置，回退 SQLite
+        return f"sqlite:///{settings.DATA_DIR / 'msg_reminder.db'}"
+
+    url = raw_url.strip()
+
+    # 如果不包含 ://，说明不是合法的数据库 URL（可能是纯数据库名如 "railway"）
+    if "://" not in url:
+        logger.warning(
+            "DATABASE_URL 不是合法的连接串 (='%s')，回退到 SQLite。"
+            "请使用 MYSQL_URL 或完整的 mysql+pymysql://... 格式",
+            url[:50],
+        )
+        return f"sqlite:///{settings.DATA_DIR / 'msg_reminder.db'}"
+
+    # Railway 的 MYSQL_URL 格式是 mysql://...，SQLAlchemy 需要 mysql+pymysql://
+    if url.startswith("mysql://"):
+        url = "mysql+pymysql://" + url[len("mysql://"):]
+
+    # 确保带上 charset=utf8mb4
+    if "mysql" in url and "charset" not in url:
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}charset=utf8mb4"
+
+    return url
+
+
+_db_url = _normalize_database_url(settings.DATABASE_URL)
+
+# MySQL 需要连接池配置
+if "mysql" in _db_url:
     _engine_kwargs["pool_size"] = 5
     _engine_kwargs["max_overflow"] = 10
     _engine_kwargs["pool_recycle"] = 3600  # 1小时回收连接，避免 MySQL gone away
-    # 确保 URL 带上 charset
-    _db_url = settings.DATABASE_URL
-    if "charset" not in _db_url:
-        sep = "&" if "?" in _db_url else "?"
-        _db_url = f"{_db_url}{sep}charset=utf8mb4"
-else:
-    _db_url = settings.DATABASE_URL
 
+logger.info("数据库连接: %s", _db_url.split("@")[-1] if "@" in _db_url else _db_url[:50])
 engine = create_engine(_db_url, **_engine_kwargs)
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()

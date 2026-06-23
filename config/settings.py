@@ -71,7 +71,13 @@ TG_MONITORED_CHATS: List[str] = _parse_list(os.environ.get("TG_MONITORED_CHATS",
 # ---------------------------------------------------------------------------
 
 # Railway 部署用 MySQL；本地开发回退到 SQLite
-DATABASE_URL: str = os.environ.get("DATABASE_URL", f"sqlite:///{DATA_DIR / 'msg_reminder.db'}")
+# 优先级：DATABASE_URL > MYSQL_URL > MYSQL_PUBLIC_URL > 回退 SQLite
+DATABASE_URL: str = (
+    os.environ.get("DATABASE_URL")
+    or os.environ.get("MYSQL_URL")
+    or os.environ.get("MYSQL_PUBLIC_URL")
+    or f"sqlite:///{DATA_DIR / 'msg_reminder.db'}"
+)
 
 # ---------------------------------------------------------------------------
 # 调度配置

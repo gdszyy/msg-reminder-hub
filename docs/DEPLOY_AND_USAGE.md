@@ -136,10 +136,11 @@ LARK_TARGET_USER_ID=ou_你的open_id
 LARK_MONITORED_CHATS=
 
 # ===== 数据库（必须用 MySQL） =====
-# 方式一：Railway 变量引用（推荐，自动同步密码变更）
-DATABASE_URL=mysql+pymysql://${{MySQL.MYSQLUSER}}:${{MySQL.MYSQLPASSWORD}}@${{MySQL.MYSQLHOST}}:${{MySQL.MYSQLPORT}}/${{MySQL.MYSQLDATABASE}}
-# 方式二：直接填写连接串（从 MySQL 服务的 Variables 页复制）
-# DATABASE_URL=mysql+pymysql://root:你的密码@mysql.railway.internal:3306/railway
+# 直接引用 Railway MySQL 服务的 MYSQL_URL 变量（推荐，最简单）
+# 注意：把下面的 MySQL-4d_X 换成你实际的 MySQL 服务名
+DATABASE_URL=${{MySQL-4d_X.MYSQL_URL}}
+# 或者直接填写完整连接串（从 MySQL 服务的 Variables 页复制 MYSQL_URL 的值）
+# DATABASE_URL=mysql://root:你的密码@mysql.railway.internal:3306/railway
 
 # ===== 调度配置 =====
 FETCH_INTERVAL_MINUTES=15
@@ -156,9 +157,12 @@ LOG_LEVEL=INFO
 ```
 
 > **注意事项：**
-> - `${{MySQL.MYSQLUSER}}` 是 Railway 的变量引用语法，会自动替换为 MySQL 服务的实际值
-> - 如果你的 MySQL 服务改了名（比如叫 "msg-db"），就把 `MySQL` 换成 `msg-db`
+> - `${{MySQL-4d_X.MYSQL_URL}}` 是 Railway 的变量引用语法，会自动替换为 MySQL 服务的完整连接串
+> - 把 `MySQL-4d_X` 换成你实际的 MySQL 服务名（在 Railway Dashboard 中查看）
+> - 代码会自动把 `mysql://` 转为 `mysql+pymysql://`（SQLAlchemy 需要），你不用手动改
+> - **不要用** `MYSQL_DATABASE`（那只是数据库名，不是连接串），要用 `MYSQL_URL`
 > - 本地开发时不配置 `DATABASE_URL` 就会自动回退到 SQLite
+> - 代码也会自动尝试读取 `MYSQL_URL` 环境变量（作为 fallback）
 
 ### 2.5 各 LLM 服务的 Base URL 参考
 
