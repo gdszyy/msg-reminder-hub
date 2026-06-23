@@ -179,27 +179,46 @@ def _process_platform(fetcher, cursor_mgr) -> tuple:
             cursor_mgr.update_position(chat_id, last_valid.platform_msg_id, new_ts)
             continue
 
-        # LLM 分析（消息过多时分批，每批最多 50 条）
-        BATCH_SIZE = 50
-        all_needs_reply = []
+        # ---- 对话分离 + 逐线程 LLM 分析 ----
+        # 先把消息拆分为独立的对话线程，再逐线程分析
+        # 这样 LLM 每次收到的是一个完整的对话，而不是被截断的片段
+        from src.processing.thread_splitter import split_messages_into_threads
 
-        for batch_start in range(0, len(valid_messages), BATCH_SIZE):
-            batch = valid_messages[batch_start:batch_start + BATCH_SIZE]
+        # 构建用于分离的消息列表（带上全局索引）
+        msgs_for_split = []
+        for i, msg in enumerate(valid_messages):
+            msgs_for_split.append({
+                "_global_index": i,  # 保留全局索引，用于后续匹配 DB id
+                "content": msg.content,
+                "sender_id": msg.sender_id,
+                "sender_name": msg.sender_name,
+                "created_at": msg.created_at,
+                "reply_to_id": msg.reply_to_id,
+                "platform_msg_id": msg.platform_msg_id,
+            })
+
+        # 对话分离：500 条消息 → N 个独立线程
+        threads = split_messages_into_threads(msgs_for_split)
+
+        # 逐线程发给 LLM 分析
+        all_needs_reply = []
+        for thread_msgs in threads:
+            # 构建 LLM 输入（保留全局索引）
             analysis_input = []
-            for i, msg in enumerate(batch):
+            for msg in thread_msgs:
                 analysis_input.append({
-                    "index": batch_start + i + 1,  # 全局索引
-                    "sender_name": msg.sender_name,
-                    "content": msg.content,
-                    "created_at": msg.created_at.strftime("%H:%M") if msg.created_at else "",
+                    "index": msg["_global_index"] + 1,  # LLM 输出的 message_index 对应全局位置
+                    "sender_name": msg.get("sender_name", ""),
+                    "content": msg.get("content", ""),
+                    "created_at": msg["created_at"].strftime("%H:%M") if isinstance(msg.get("created_at"), datetime) else "",
                 })
 
-            batch_results = analyze_messages(
+            thread_results = analyze_messages(
                 messages=analysis_input,
                 chat_name=chat_name,
                 target_user_id=settings.LARK_TARGET_USER_ID,
             )
-            all_needs_reply.extend(batch_results)
+            all_needs_reply.extend(thread_results)
 
         # 创建提醒
         if all_needs_reply:
