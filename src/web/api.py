@@ -352,7 +352,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <button onclick="filterStatus('pending')">待回复</button>
             <button onclick="filterStatus('reminded')">已提醒</button>
             <button onclick="filterStatus('replied')">已处理</button>
-            <button onclick="showFeed()">📰 近期动态</button>
+            <button onclick="showFeed(this)">📰 近期动态</button>
             <select onchange="filterPlatform(this.value)">
                 <option value="">所有平台</option>
                 <option value="lark">飞书</option>
@@ -361,7 +361,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <button class="btn-action" onclick="triggerFetch()">⚡ 立即拉取</button>
             <button class="btn-action" onclick="triggerRemind()">🔔 立即提醒</button>
         </div>
-        <div class="reminder-list" id="reminderList"></div>
+        <div class="reminder-list" id="reminderList" style="display:flex;"></div>
         <div class="feed-section" id="feedSection" style="display:none; margin-top: 24px;">
             <h2 style="font-size:18px; margin-bottom:12px;">📰 近期动态</h2>
             <div id="feedList"></div>
@@ -446,13 +446,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 document.getElementById('contextModal').classList.remove('active');
         }
 
-        async function showFeed() {
+        async function showFeed(btn) {
             // 切换视图
             document.getElementById('reminderList').style.display = 'none';
             document.getElementById('feedSection').style.display = 'block';
             // 更新按钮状态
             document.querySelectorAll('.filters button').forEach(b => b.classList.remove('active'));
-            event.target.classList.add('active');
+            if (btn) btn.classList.add('active');
             // 加载数据
             const resp = await fetch('/api/feed?hours=24&limit=100');
             const data = await resp.json();
