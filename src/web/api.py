@@ -126,6 +126,33 @@ def get_message_context(message_id: int, window: int = Query(10, ge=1, le=50)):
         session.close()
 
 
+@router.post("/api/fetch")
+def trigger_fetch():
+    """手动触发一次消息拉取"""
+    import threading
+    from main import run_fetch_cycle
+
+    # 在后台线程执行，避免阻塞请求
+    def _run():
+        try:
+            result = run_fetch_cycle()
+            logger.info("手动拉取完成: %s", result)
+        except Exception as e:
+            logger.error("手动拉取失败: %s", e)
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    return {"ok": True, "message": "拉取任务已触发，请稍后刷新查看结果"}
+
+
+@router.post("/api/remind")
+def trigger_remind():
+    """手动触发一次提醒发送"""
+    from src.delivery.scheduler import run_reminder_cycle
+    result = run_reminder_cycle()
+    return {"ok": True, "message": "提醒发送完成", "result": result}
+
+
 @router.get("/api/stats")
 def get_stats():
     """获取统计数据"""
@@ -223,8 +250,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         .stat-card .label { font-size: 14px; color: #666; margin-bottom: 4px; }
         .stat-card .value { font-size: 28px; font-weight: 700; color: #1a1a2e; }
         .filters { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
-        .filters select, .filters button { padding: 8px 16px; border: 1px solid #ddd; border-radius: 8px; background: white; cursor: pointer; }
+        .filters select, .filters button { padding: 8px 16px; border: 1px solid #ddd; border-radius: 8px; background: white; cursor: pointer; font-size: 14px; }
         .filters button.active { background: #4361ee; color: white; border-color: #4361ee; }
+        .filters .btn-action { background: #f0f7ff; color: #4361ee; border-color: #4361ee; font-weight: 500; }
+        .filters .btn-action:hover { background: #4361ee; color: white; }
+        .filters .btn-action:disabled { opacity: 0.5; cursor: not-allowed; }
+        .toast { position: fixed; top: 20px; right: 20px; padding: 12px 20px; border-radius: 8px; background: #333; color: white; font-size: 14px; z-index: 2000; display: none; }
+        .toast.show { display: block; animation: fadeIn 0.3s; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
         .reminder-list { display: flex; flex-direction: column; gap: 12px; }
         .reminder-card { background: white; border-radius: 12px; padding: 16px 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); display: flex; align-items: flex-start; gap: 12px; transition: transform 0.1s; }
         .reminder-card:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
@@ -266,6 +299,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <option value="lark">飞书</option>
                 <option value="telegram">Telegram</option>
             </select>
+            <button class="btn-action" onclick="triggerFetch()">⚡ 立即拉取</button>
+            <button class="btn-action" onclick="triggerRemind()">🔔 立即提醒</button>
         </div>
         <div class="reminder-list" id="reminderList"></div>
     </div>
@@ -352,6 +387,53 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         function closeContext(e) {
             if (e.target === document.getElementById('contextModal'))
                 document.getElementById('contextModal').classList.remove('active');
+        }
+
+        async function triggerFetch() {
+            const btn = event.target;
+            btn.disabled = true;
+            btn.textContent = '⚡ 拉取中...';
+            showToast('⚙️ 消息拉取已触发，请稍等...');
+            try {
+                const resp = await fetch('/api/fetch', {method:'POST'});
+                const data = await resp.json();
+                showToast('✅ ' + data.message);
+                // 5秒后刷新数据
+                setTimeout(() => { loadStats(); loadReminders(); }, 5000);
+            } catch(e) {
+                showToast('❌ 拉取失败: ' + e.message);
+            }
+            btn.disabled = false;
+            btn.textContent = '⚡ 立即拉取';
+        }
+
+        async function triggerRemind() {
+            const btn = event.target;
+            btn.disabled = true;
+            btn.textContent = '🔔 发送中...';
+            try {
+                const resp = await fetch('/api/remind', {method:'POST'});
+                const data = await resp.json();
+                showToast(`✅ 提醒完成: 发送${data.result?.sent || 0}条`);
+                loadStats(); loadReminders();
+            } catch(e) {
+                showToast('❌ 提醒失败: ' + e.message);
+            }
+            btn.disabled = false;
+            btn.textContent = '🔔 立即提醒';
+        }
+
+        function showToast(msg) {
+            let toast = document.getElementById('toast');
+            if (!toast) {
+                toast = document.createElement('div');
+                toast.id = 'toast';
+                toast.className = 'toast';
+                document.body.appendChild(toast);
+            }
+            toast.textContent = msg;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 4000);
         }
 
         loadStats();

@@ -172,13 +172,41 @@ LOG_LEVEL=INFO
 
 ### 2.6 获取 LARK_TARGET_USER_ID
 
-这是你自己的飞书 open_id，用于判断"哪些消息是跟你相关的"。获取方式：
+这是你自己的飞书 open_id，系统用它来判断“哪些消息是跟你相关的”。
 
-1. 在飞书开放平台 → 你的应用 → 事件订阅 → 配置 Webhook URL
-2. 在任意群里 @机器人 发一条消息
-3. 查看 Railway 日志，找到 `sender_id` 字段，那就是你的 open_id
+**获取方式（任选其一）：**
 
-或者直接在飞书管理后台 → 组织架构 → 找到你自己 → 查看 open_id。
+**方法 1：通过飞书开放平台 API 调试器**
+1. 登录 [Lark 开放平台](https://open.larksuite.com) 或 [飞书开放平台](https://open.feishu.cn)
+2. 进入你的应用 → 左侧菜单「API 调试器」
+3. 搜索并调用 `GET /open-apis/authen/v1/user_info`（需先授权登录）
+4. 返回结果中的 `open_id` 字段就是你的 ID
+
+**方法 2：通过机器人日志获取**
+1. 部署服务后，在任意群里 @机器人 发一条消息
+2. 查看 Railway Logs，找到日志中的 `sender_id=ou_xxxxxxxx`
+3. 那个 `ou_` 开头的字符串就是你的 open_id
+
+**方法 3：通过管理后台**
+1. 飞书管理后台 → 组织架构 → 搜索你的名字
+2. 点击你的名字进入详情页
+3. URL 中或详情页中可以看到 open_id
+
+**方法 4：curl 命令行**
+```bash
+# 先获取 token
+TOKEN=$(curl -s -X POST 'https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal' \
+  -H 'Content-Type: application/json' \
+  -d '{"app_id":"'你的APP_ID'","app_secret":"'你的APP_SECRET'"}' | jq -r '.tenant_access_token')
+
+# 用 token 查询你的信息（通过手机号或邮箱）
+curl -s 'https://open.larksuite.com/open-apis/contact/v3/users/batch_get_id' \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"mobiles":["+你的手机号"]}' | jq '.data.user_list[0].user_id'
+```
+
+> open_id 格式示例：`ou_d06d8df64bc40ed44f8e8df3f4be3403`（以 `ou_` 开头的 32 位字符串）
 
 ### 2.7 配置飞书 Webhook（可选，启用实时模式）
 
