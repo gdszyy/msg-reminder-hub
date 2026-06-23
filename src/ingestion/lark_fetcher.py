@@ -20,6 +20,7 @@ Lark (飞书) 消息拉取器
 
 import json
 import logging
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -285,9 +286,10 @@ class LarkFetcher(BaseFetcher):
         messages = []
         page_token = None
 
-        # 如果没有起始时间戳，默认拉取最近 1 小时
+        # 如果没有起始时间戳（首次拉取），默认拉取最近 24 小时
         if not since_timestamp:
-            since_timestamp = int(time.time()) - 3600
+            default_hours = int(os.environ.get("FETCH_INITIAL_HOURS", "24"))
+            since_timestamp = int(time.time()) - (default_hours * 3600)
 
         end_timestamp = int(time.time())
 

@@ -182,6 +182,58 @@ def get_stats():
         session.close()
 
 
+@router.get("/api/feed")
+def get_feed(
+    limit: int = Query(50, ge=1, le=200),
+    hours: int = Query(24, ge=1, le=168),
+):
+    """
+    获取近期动态/待关注资讯。
+    按群组分组返回最近 N 小时内的消息摘要。
+    """
+    from datetime import timedelta
+    session = get_session()
+    try:
+        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        messages = (
+            session.query(Message)
+            .filter(Message.created_at >= since)
+            .order_by(Message.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+
+        # 按群组分组
+        groups = {}
+        for m in messages:
+            key = m.chat_name or m.chat_id
+            if key not in groups:
+                groups[key] = {
+                    "chat_name": m.chat_name or m.chat_id,
+                    "chat_id": m.chat_id,
+                    "platform": m.platform,
+                    "messages": [],
+                    "count": 0,
+                }
+            groups[key]["messages"].append({
+                "id": m.id,
+                "sender_name": m.sender_name,
+                "content": m.content[:200],
+                "created_at": m.created_at.isoformat() if m.created_at else "",
+            })
+            groups[key]["count"] += 1
+
+        # 按消息数量排序
+        feed = sorted(groups.values(), key=lambda g: g["count"], reverse=True)
+        return {
+            "total_messages": len(messages),
+            "groups": feed,
+            "since": since.isoformat(),
+        }
+    finally:
+        session.close()
+
+
 # ---------------------------------------------------------------------------
 # HTML Dashboard
 # ---------------------------------------------------------------------------
@@ -276,6 +328,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         .btn-reply { background: #4361ee; color: white; }
         .btn-ignore { background: #e9ecef; color: #666; }
         .empty { text-align: center; padding: 60px 20px; color: #999; }
+        .feed-group { background: white; border-radius: 12px; padding: 16px 20px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+        .feed-group-header { font-weight: 600; font-size: 15px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+        .feed-group-header .badge { font-size: 12px; background: #e8f4fd; color: #1976d2; padding: 2px 8px; border-radius: 4px; }
+        .feed-msg { font-size: 13px; color: #555; padding: 4px 0; border-bottom: 1px solid #f5f5f5; }
+        .feed-msg:last-child { border-bottom: none; }
+        .feed-msg .sender { font-weight: 500; color: #333; }
         .context-modal { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; justify-content: center; align-items: center; }
         .context-modal.active { display: flex; }
         .context-panel { background: white; border-radius: 16px; width: 90%; max-width: 700px; max-height: 80vh; overflow-y: auto; padding: 24px; }
@@ -294,6 +352,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <button onclick="filterStatus('pending')">待回复</button>
             <button onclick="filterStatus('reminded')">已提醒</button>
             <button onclick="filterStatus('replied')">已处理</button>
+            <button onclick="showFeed()">📰 近期动态</button>
             <select onchange="filterPlatform(this.value)">
                 <option value="">所有平台</option>
                 <option value="lark">飞书</option>
@@ -303,6 +362,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <button class="btn-action" onclick="triggerRemind()">🔔 立即提醒</button>
         </div>
         <div class="reminder-list" id="reminderList"></div>
+        <div class="feed-section" id="feedSection" style="display:none; margin-top: 24px;">
+            <h2 style="font-size:18px; margin-bottom:12px;">📰 近期动态</h2>
+            <div id="feedList"></div>
+        </div>
     </div>
     <div class="context-modal" id="contextModal" onclick="closeContext(event)">
         <div class="context-panel" id="contextPanel"></div>
@@ -354,12 +417,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             `).join('');
         }
 
-        function filterStatus(s) {
-            currentStatus = s;
-            document.querySelectorAll('.filters button').forEach(b => b.classList.remove('active'));
-            event.target.classList.add('active');
-            loadReminders();
-        }
         function filterPlatform(p) { currentPlatform = p; loadReminders(); }
 
         async function markReply(id) {
@@ -387,6 +444,48 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         function closeContext(e) {
             if (e.target === document.getElementById('contextModal'))
                 document.getElementById('contextModal').classList.remove('active');
+        }
+
+        async function showFeed() {
+            // 切换视图
+            document.getElementById('reminderList').style.display = 'none';
+            document.getElementById('feedSection').style.display = 'block';
+            // 更新按钮状态
+            document.querySelectorAll('.filters button').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+            // 加载数据
+            const resp = await fetch('/api/feed?hours=24&limit=100');
+            const data = await resp.json();
+            const list = document.getElementById('feedList');
+            if (!data.groups.length) {
+                list.innerHTML = '<div class="empty">最近 24 小时无新消息</div>';
+                return;
+            }
+            list.innerHTML = data.groups.map(g => `
+                <div class="feed-group">
+                    <div class="feed-group-header">
+                        <span>${g.chat_name}</span>
+                        <span class="badge">${g.count} 条消息</span>
+                    </div>
+                    ${g.messages.slice(0, 5).map(m => `
+                        <div class="feed-msg">
+                            <span class="sender">${m.sender_name || '未知'}:</span>
+                            ${m.content}
+                        </div>
+                    `).join('')}
+                    ${g.count > 5 ? `<div style="font-size:12px;color:#999;margin-top:4px;">...还有 ${g.count - 5} 条</div>` : ''}
+                </div>
+            `).join('');
+        }
+
+        function filterStatus(s) {
+            // 切回提醒列表视图
+            document.getElementById('reminderList').style.display = 'flex';
+            document.getElementById('feedSection').style.display = 'none';
+            currentStatus = s;
+            document.querySelectorAll('.filters button').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+            loadReminders();
         }
 
         async function triggerFetch() {
